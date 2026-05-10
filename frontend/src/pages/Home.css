@@ -1,0 +1,36 @@
+body, html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevents layout breaking */
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background-color: #04060f;
+  background-image:
+    radial-gradient(circle at 30% 0%,  rgba(79, 70, 229, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 80% 90%, rgba(109, 40, 217, 0.08) 0%, transparent 50%);
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+}
+
+.main-container {
+  margin-top: 60px; /* Header height */
+  height: calc(100vh - 60px);
+  display: flex;
+  width: 100%;
+}
+
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0; /* prevents flex overflow */
+  background: rgba(255, 255, 255, 0.005);
+  z-index: 1;
+  overflow: hidden; /* Chat component handles its own scrolling */
+}

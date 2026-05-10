@@ -1,0 +1,25 @@
+# Node.js
+node_modules/
+.env
+backend/.env
+frontend/.env.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Build
+build/
+dist/
+
+# Firebase Service Account (never commit!)
+*firebase-adminsdk*.json
+*.serviceaccount.json
+
+# Scratch / temp
+scratch/
+path/to/large-file

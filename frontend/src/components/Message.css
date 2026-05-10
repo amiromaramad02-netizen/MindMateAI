@@ -1,0 +1,219 @@
+/* ─── Entry animation ─────────────────────────────────────────── */
+@keyframes messageFadeUp {
+  0%   { opacity: 0; transform: translateY(12px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+/* ─── Message row layout ─────────────────────────────────────── */
+.message-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 18px; /* Space for the absolute timestamp */
+  animation: messageFadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 0;
+}
+
+.user-row  { flex-direction: row-reverse; }
+.bot-row   { flex-direction: row; }
+
+/* ─── Avatars ─────────────────────────────────────────────────── */
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.bot-avatar {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.45);
+  font-size: 0.95rem;
+}
+
+.user-avatar {
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  color: #a5b4fc;
+}
+
+.user-avatar svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ─── Bubble group (bubble + timestamp) ─────────────────────── */
+.bubble-group {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  max-width: min(70%, 700px);
+}
+
+/* ─── Message bubbles ─────────────────────────────────────────── */
+.message-bubble {
+  padding: 0.85rem 1.15rem;
+  border-radius: 20px;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  font-family: 'Inter', sans-serif;
+  word-wrap: break-word;
+  position: relative;
+}
+
+/* User bubble — indigo-to-violet gradient with glow */
+.user-bubble {
+  background: linear-gradient(135deg, #4f46e5 0%, #6d28d9 100%);
+  color: #ffffff;
+  border-bottom-right-radius: 5px;
+  box-shadow:
+    0 4px 20px rgba(79, 70, 229, 0.35),
+    0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Bot bubble — frosted glass with visible background for contrast */
+.bot-bubble {
+  background: rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: #e2e8f0;
+  border-bottom-left-radius: 5px;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Timestamp ───────────────────────────────────────────────── */
+.message-time {
+  font-size: 0.68rem;
+  color: #475569;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  line-height: 1;
+  position: absolute;
+  bottom: -16px;
+  white-space: nowrap;
+}
+
+.time-right { right: 0; }
+.time-left  { left: 0;  }
+
+.message-row:hover .message-time {
+  opacity: 1;
+}
+
+/* ─── Typing Cursor ─── */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background-color: currentColor;
+  margin-left: 4px;
+  vertical-align: middle;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ─── Message Editing UI ─────────────────────────────────────── */
+.editing-row {
+  max-width: 100% !important;
+}
+
+.edit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 300px;
+}
+
+.edit-textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+}
+
+.edit-textarea:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.edit-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.edit-btn.save {
+  background: #4f46e5;
+  color: white;
+}
+
+.edit-btn.save:hover {
+  background: #4338ca;
+}
+
+.edit-btn.cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+.edit-btn.cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Edit icon on user messages */
+.message-edit-icon {
+  position: absolute;
+  top: 50%;
+  left: -40px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  padding: 8px;
+  opacity: 0;
+  transition: all 0.2s;
+  border-radius: 50%;
+}
+
+.message-edit-icon:hover {
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.message-bubble:hover .message-edit-icon {
+  opacity: 1;
+}
+
+.message-edit-icon svg {
+  width: 16px;
+  height: 16px;
+}

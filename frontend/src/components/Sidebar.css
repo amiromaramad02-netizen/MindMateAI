@@ -1,0 +1,323 @@
+/* ─── Sidebar shell ───────────────────────────────────────────── */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%; /* Better than 100vh since it's inside calc(100vh - 60px) */
+  width: 280px;
+  background-color: #080b14;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
+  flex-shrink: 0;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+/* ─── Top Section Wrapper ─────────────────────────────────────── */
+.sidebar-top {
+  padding: 1.25rem 1rem 0;
+  flex-shrink: 0;
+}
+
+
+
+/* ─── New Chat button ─────────────────────────────────────────── */
+.new-chat-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.75rem 1rem;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 14px;
+  color: #a5b4fc;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  margin-bottom: 1.5rem;
+}
+
+.new-chat-button svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.new-chat-button:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15);
+}
+
+/* ─── Section label ───────────────────────────────────────────── */
+.chats-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ─── Chat list ───────────────────────────────────────────────── */
+.chat-list {
+  list-style: none;
+  padding: 0 1rem; /* Re-adding the left/right padding since we removed it from .sidebar */
+  margin: 0;
+  overflow-y: auto;
+  flex: 1; /* flex-grow: 1, flex-shrink: 1, flex-basis: 0 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.06) transparent;
+  padding-bottom: 10px;
+}
+
+.chat-list::-webkit-scrollbar { width: 4px; }
+.chat-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 99px;
+}
+
+.chat-list-empty {
+  font-size: 0.82rem;
+  color: #334155;
+  text-align: center;
+  padding: 1.5rem 0.5rem;
+  line-height: 1.6;
+}
+
+/* ─── Chat items (3-line: title, preview, time) ──────────────── */
+.chat-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0.75rem 0.75rem;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 2px;
+  position: relative;
+}
+
+.chat-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-item-title {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.18s ease;
+}
+
+.chat-item-preview {
+  font-size: 0.75rem;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.chat-item-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.chat-item-time {
+  font-size: 0.65rem;
+  color: #334155;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* ─── Hover & active ─────────────────────────────────────────── */
+.chat-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-item:hover .chat-item-title {
+  color: #e2e8f0;
+}
+
+.chat-item:hover .chat-item-preview {
+  color: #64748b;
+}
+
+.chat-item.active {
+  background: rgba(99, 102, 241, 0.12);
+  border-left: 3px solid #818cf8;
+  padding-left: calc(0.75rem - 3px);
+}
+
+.chat-item.active .chat-item-title {
+  color: #c7d2fe;
+  font-weight: 600;
+}
+
+.chat-item.active .chat-item-preview {
+  color: #64748b;
+}
+
+.chat-item.active .chat-item-time {
+  color: #6366f1;
+}
+
+.chat-item.deleting {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ─── Delete button ───────────────────────────────────────────── */
+.delete-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.delete-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.chat-item:hover .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+/* ─── User footer ─────────────────────────────────────────────── */
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 10, 20, 0.95);
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.user-avatar-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-email {
+  font-size: 0.7rem;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Logout button ───────────────────────────────────────────── */
+.logout-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.logout-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.logout-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+/* ─── Admin Link Button ───────────────────────────────────────── */
+.admin-link-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.admin-link-btn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.25);
+  color: #c7d2fe;
+}
