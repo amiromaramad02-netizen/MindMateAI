@@ -21,8 +21,6 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   tracesSampleRate: 1.0,
 });
-app.use(Sentry.Handlers.requestHandler());
-
 // ── Global middleware ────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({
@@ -58,7 +56,7 @@ app.use("/api/user", verifyToken, require("./routes/user"));
 app.use("/api/support", verifyToken, require("./routes/support"));
 
 // ── Error handling (must be last) ────────────────────────────────
-app.use(Sentry.Handlers.errorHandler());
+Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 // ── Startup ──────────────────────────────────────────────────────
