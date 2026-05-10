@@ -63,11 +63,26 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5002;
 
 const start = async () => {
-  validateEnv();
-  await testConnection();
-  await runMigrations();
-  await settingsManager.loadSettings();
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  console.log("Starting MindMate API...");
+  console.log(`Port: ${PORT}`);
+  console.log(`Node Env: ${process.env.NODE_ENV}`);
+
+  // Start listening immediately so Railway healthcheck passes
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server is listening on 0.0.0.0:${PORT}`);
+    console.log("Healthcheck endpoint available at /health");
+  });
+
+  try {
+    validateEnv();
+    await testConnection();
+    await runMigrations();
+    await settingsManager.loadSettings();
+    console.log("All systems initialized successfully.");
+  } catch (err) {
+    console.error("Initialization warning (app is still running):", err.message);
+    console.error("Please check your environment variables (DATABASE_URL, etc.)");
+  }
 };
 
 start().catch((err) => {

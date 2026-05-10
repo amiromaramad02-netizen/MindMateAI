@@ -27,9 +27,8 @@ const testConnection = async () => {
       break;
     } catch (err) {
       retries -= 1;
-      console.error(`MySQL connection error. Retries left: ${retries}`, err);
       if (!retries) {
-        process.exit(1);
+        throw new Error(`MySQL connection failed after retries: ${err.message}`);
       }
       await new Promise((res) => setTimeout(res, 5000)); // Wait 5 seconds before retrying
     }
