@@ -1,58 +1,52 @@
-const OpenAI = require("openai");
+const Groq = require("groq-sdk");
 const logger = require("../utils/logger");
 
-// Detect if we're using xAI or standard OpenAI
-const isXAI = process.env.OPENAI_API_KEY?.startsWith("xai-");
-const AI_MODEL = isXAI ? "grok-beta" : "gpt-4o-mini";
-
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: isXAI ? "https://api.x.ai/v1" : undefined,
-    })
-  : null;
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const AI_MODEL = "llama3-8b-8192";
 
 /**
- * Stream chat using configured AI provider (OpenAI/xAI)
- * @param {Array} messages - Chat messages array [{role, content}]
- * @param {Object} res - Express response object to write SSE stream
- * @param {Function} onToken - Optional callback for each token
- * @returns {Promise<string>} - The full response text
+ * Stream or collect chat using Groq API.
+ *
+ * When `res` is provided → streams tokens via SSE to the client.
+ * When `res` is null    → collects and returns the full response text.
+ *
+ * @param {Array}  messages - Chat messages [{role, content}]
+ * @param {Object|null} res - Express response object (null for non-streaming)
+ * @returns {Promise<string>} The full response text
  */
-const streamChat = async (messages, res, onToken) => {
-  if (!openai) {
-    throw new Error("AI provider not configured. Please set OPENAI_API_KEY.");
+const streamChat = async (messages, res) => {
+  if (!groq) {
+    throw new Error("Groq is not configured. Please set the GROQ_API_KEY environment variable.");
   }
 
   let fullText = "";
-  
+
   try {
-    const stream = await openai.chat.completions.create({
+    const stream = await groq.chat.completions.create({
       model: AI_MODEL,
-      messages: messages,
+      messages,
       stream: true,
       max_tokens: 1024,
-      temperature: 0.8,
+      temperature: 0.7,
     });
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || "";
       if (content) {
         fullText += content;
-        if (onToken) onToken(content);
-        
-        // Standardized SSE format for the frontend
-        res.write(`data: ${JSON.stringify({ token: content, done: false })}\n\n`);
+
+        // Only write to SSE if a response object was provided
+        if (res) {
+          res.write(`data: ${JSON.stringify({ token: content, done: false })}\n\n`);
+        }
       }
     }
 
     return fullText;
   } catch (error) {
-    logger.error("Error in aiService.streamChat:", error.message);
-    throw error; // Re-throw to be handled by the route's fallback logic
+    logger.error(`[aiService] Groq stream error: ${error.message}`);
+    throw error;
   }
 };
 
-module.exports = {
-  streamChat,
-};
+module.exports = { streamChat };

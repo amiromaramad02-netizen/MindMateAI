@@ -3,6 +3,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const compression = require("compression");
 const Sentry = require("@sentry/node");
 const { validateEnv } = require("./utils/envValidator");
 const { sanitizeInputs, limiter } = require("./middleware/auth");
@@ -23,6 +24,7 @@ Sentry.init({
 });
 // ── Global middleware ────────────────────────────────────────────
 app.use(helmet());
+app.use(compression()); // gzip compression for all responses
 app.use(cors({
   origin: process.env.CORS_ORIGIN || "http://localhost:5173",
   credentials: true

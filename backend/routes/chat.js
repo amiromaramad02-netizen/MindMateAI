@@ -10,22 +10,14 @@ const {
   deleteMessagesAfter,
 } = require("../models/Message");
 const { getPreferences } = require("../models/User");
-const { generateResponse } = require("../services/aiRouter");
-const { checkAndSummarize } = require("../services/memoryManager");
 const { streamChat } = require("../services/aiService");
-const OpenAI = require("openai");
+const { checkAndSummarize, getConversationContext } = require("../services/memoryManager");
+const { predictEmotion } = require("../services/emotionDetector");
+const logger = require("../utils/logger");
 
-const isXAI = process.env.OPENAI_API_KEY?.startsWith("xai-");
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: isXAI ? "https://api.x.ai/v1" : undefined,
-    })
-  : null;
+// ── Constants ───────────────────────────────────────────────────
+const GREETINGS = ["hi", "hello", "hey", "yo", "hi there", "hey there", "greetings", "sup", "heyy"];
 
-const AI_MODEL = isXAI ? "grok-beta" : "gpt-4o-mini";
-
-// Keywords that trigger Gen Z tone mode automatically
 const GEN_Z_TRIGGERS = [
   "gen z", "genz", "talk like gen z", "talk like a gen z", "chill mode",
   "bruh", "no cap", "fr fr", "lowkey", "ngl", "slay", "vibe check",
@@ -40,15 +32,31 @@ const CREATOR_TRIGGERS = [
   "tell me about your creator"
 ];
 
-/**
- * Builds the adaptive system prompt based on emotion, memory, and tone mode.
- */
+// ── Crisis responses (no Groq needed for safety) ─────────────────
+const CRISIS_RESPONSES = [
+  "I'm really concerned about what you've shared. Please reach out to a crisis helpline immediately: 988 (Suicide & Crisis Lifeline). You matter, and help is available right now.",
+  "What you're feeling is very serious, and I want to make sure you're safe. Please talk to someone who can help — call 988 or text HOME to 741741. You are not alone."
+];
+
+// ── Greeting responses ───────────────────────────────────────────
+const GREETING_RESPONSES = [
+  "Hello. I'm MindMate. I'm here to listen and support you. How are you feeling today?",
+  "Hi. I'm glad you reached out. As your therapist today, what's on your mind?",
+  "Hello. I'm here to provide a safe space for you. How can I help you navigate things today?",
+  "Hi there. I'm ready whenever you are. What would you like to explore together today?"
+];
+
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// ── Prompt Builder ──────────────────────────────────────────────
 function buildSystemPrompt(emotion, confidence, memoryContext, isGenZ) {
   let prompt = `You are MindMate, an empathetic and supportive mental health chatbot. You provide compassionate, thoughtful responses. You talk as a professional therapist with 10+ years of experience. Don't act as AI, act as a human therapist.`;
 
   if (emotion && emotion !== "neutral" && emotion !== "greeting") {
-    prompt += `\n\nDetected emotional state: ${emotion} (${(confidence * 100).toFixed(0)}% confidence).
-Respond with awareness of this emotional state — acknowledge it naturally without being clinical.`;
+    prompt += `\n\nDETECTED EMOTIONAL STATE: ${emotion} (${(confidence * 100).toFixed(0)}% confidence).
+Respond with deep awareness of this emotional state — acknowledge it naturally and empathetically without being clinical or robotic.`;
   }
 
   if (memoryContext) {
@@ -62,11 +70,9 @@ Most importantly: always stay empathetic and supportive. Never sacrifice emotion
   }
 
   prompt += `\n\nGuidelines:
-- You are a professional therapist with 10+ years of experience.
-- Don't act as AI, act as human therapist.
 - Be warm, empathetic, and non-judgmental
-- Don't over ask follow up questions. Make it conversational and natural.
-- Don't over use the phrase "it sounds like". Instead use "I hear you", "I understand" etc..
+- Don't over-ask follow up questions. Make it conversational and natural.
+- Don't over use the phrase "it sounds like". Instead use "I hear you", "I understand" etc.
 - For crisis situations, always provide crisis hotline numbers
 - Make sure the questions don't sound generic.
 - Don't repeat yourself.
@@ -77,10 +83,6 @@ Most importantly: always stay empathetic and supportive. Never sacrifice emotion
   return prompt;
 }
 
-/**
- * Detects whether Gen Z tone is appropriate for this conversation.
- * Returns true if toneMode is "genz" OR user messages contain Gen Z keywords.
- */
 function detectGenZTone(toneMode, recentMessages) {
   if (toneMode === "genz") return true;
   return recentMessages
@@ -88,7 +90,19 @@ function detectGenZTone(toneMode, recentMessages) {
     .some(m => GEN_Z_TRIGGERS.some(trigger => m.text.toLowerCase().includes(trigger)));
 }
 
-// ── Send message and get AI response ────────────────────────────
+// ── Helper: set SSE headers ─────────────────────────────────────
+function initSSE(res) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+}
+
+function sendSSE(res, data) {
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+// ── POST /send (non-streaming) ──────────────────────────────────
 router.post("/send", async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -114,13 +128,13 @@ router.post("/send", async (req, res) => {
       chat = await getChatByChatId(currentChatId);
     }
 
-    // Store user message if allowed
     if (shouldSave && currentChatId) {
       await addMessage(currentChatId, "user", message);
     }
 
     const cleanMessage = message.toLowerCase().trim();
 
+    // ── Creator fast path ─────────────────────────────────────
     if (CREATOR_TRIGGERS.some(t => cleanMessage.includes(t))) {
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", CREATOR_RESPONSE, "neutral");
@@ -128,47 +142,33 @@ router.post("/send", async (req, res) => {
       return res.json({ success: true, data: { response: CREATOR_RESPONSE, chatId: currentChatId, emotion: "neutral" } });
     }
 
-    const GREETINGS = ["hi", "hello", "hey", "yo", "hi there", "hey there", "greetings", "sup", "heyy"];
-
     let aiResponse = "";
     let finalEmotion = "neutral";
     let finalConfidence = 1.0;
 
-    const { predictEmotion } = require("../services/emotionDetector");
-    const { getLocalResponse } = require("../utils/localResponses");
-    const { getConversationContext } = require("../services/memoryManager");
-    const { getRecentMessages } = require("../models/Message");
-
+    // ── Greeting fast path ────────────────────────────────────
     if (GREETINGS.includes(cleanMessage)) {
-      aiResponse = getLocalResponse("greeting");
+      aiResponse = pickRandom(GREETING_RESPONSES);
       finalEmotion = "greeting";
     } else {
-      // 1. Detect emotion via TFLite
       const detection = await predictEmotion(message);
       finalEmotion = detection.emotion;
       finalConfidence = detection.confidence;
 
+      // ── Crisis fast path ────────────────────────────────────
       if (finalEmotion === "crisis") {
-        aiResponse = getLocalResponse("crisis");
+        aiResponse = pickRandom(CRISIS_RESPONSES);
       } else {
-        // Fetch context and recent messages (includes the user msg we just stored)
         const memoryContext = await getConversationContext(currentChatId, userId);
         const recentMessages = await getRecentMessages(currentChatId, 12);
-
-        // Detect Gen Z tone from toneMode param or message keywords
         const isGenZ = detectGenZTone(toneMode, recentMessages);
-
-        // Build adaptive system prompt
         const systemPrompt = buildSystemPrompt(finalEmotion, finalConfidence, memoryContext, isGenZ);
 
-        // Build messages payload — ensure the new user message is always the last entry
-        // recentMessages from DB already includes the newly added user message
         const historyPayload = recentMessages.map(msg => ({
           role: msg.role === "assistant" ? "assistant" : "user",
           content: msg.text,
         }));
 
-        // Guarantee no duplication: if history already ends with the new user message, use as-is
         const lastEntry = historyPayload[historyPayload.length - 1];
         if (!lastEntry || lastEntry.role !== "user" || lastEntry.content !== message) {
           historyPayload.push({ role: "user", content: message });
@@ -179,56 +179,23 @@ router.post("/send", async (req, res) => {
           ...historyPayload,
         ];
 
-        // Primary: Local Ollama LLM
         try {
-          const ollamaRes = await fetch("http://localhost:11434/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: "llama3",
-              messages: messagesPayload,
-              stream: false,
-            }),
-          });
-
-          if (!ollamaRes.ok) throw new Error(`Ollama returned ${ollamaRes.status}`);
-          const ollamaData = await ollamaRes.json();
-          aiResponse = ollamaData.message?.content || "";
-          if (!aiResponse) throw new Error("Empty response from Ollama");
-        } catch (ollamaErr) {
-          console.log("Ollama failed, falling back:", ollamaErr.message);
-
-          // Secondary: OpenAI fallback
-          if (openai) {
-            try {
-              const completion = await openai.chat.completions.create({
-                model: AI_MODEL,
-                messages: messagesPayload,
-                max_tokens: 350,
-                temperature: 0.82,
-              });
-              aiResponse = completion.choices[0].message.content;
-            } catch (gptErr) {
-              console.error("GPT fallback failed:", gptErr.message);
-              aiResponse = getLocalResponse(finalEmotion);
-            }
-          } else {
-            aiResponse = getLocalResponse(finalEmotion);
-          }
+          // streamChat with null res returns full text for non-streaming
+          aiResponse = await streamChat(messagesPayload, null);
+        } catch (groqErr) {
+          logger.error("Groq failed on /send:", groqErr.message);
+          aiResponse = "I'm experiencing a temporary issue. Please try again in a moment.";
         }
       }
     }
 
-    // Store AI response if allowed
     if (shouldSave && currentChatId) {
       await addMessage(currentChatId, "assistant", aiResponse, finalEmotion);
-      // Bump chat timestamp so it sorts to top in sidebar
       await updateChatTimestamp(currentChatId);
     }
 
-    // Trigger memory summarization (non-blocking)
     checkAndSummarize(currentChatId).catch(err =>
-      console.error("Memory check error:", err.message)
+      logger.error("Memory check error:", err.message)
     );
 
     res.json({
@@ -241,12 +208,12 @@ router.post("/send", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Chat send error:", error.message);
+    logger.error("Chat send error:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ── SSE Streaming endpoint ──────────────────────────────────────
+// ── POST /stream (SSE streaming) ─────────────────────────────────
 router.post("/stream", async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -276,64 +243,50 @@ router.post("/stream", async (req, res) => {
 
     const cleanMessage = message.toLowerCase().trim();
 
-    const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    // ── Initialize SSE connection ──────────────────────────────
+    initSSE(res);
 
-    if (CREATOR_TRIGGERS.some(t => cleanMessage.includes(t))) {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no"); // Prevents proxy buffering on Railway/Nginx
-
-    const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-
-    // Handle creator fast path
+    // ── Creator fast path ─────────────────────────────────────
     if (CREATOR_TRIGGERS.some(t => cleanMessage.includes(t))) {
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", CREATOR_RESPONSE, "neutral");
       }
-      sendSSE({ token: CREATOR_RESPONSE, done: false });
-      sendSSE({ done: true, chatId: currentChatId, emotion: "neutral" });
-      res.end();
-      return;
+      sendSSE(res, { token: CREATOR_RESPONSE, done: false });
+      sendSSE(res, { done: true, chatId: currentChatId, emotion: "neutral" });
+      return res.end();
     }
-
-    const { predictEmotion } = require("../services/emotionDetector");
-    const { getLocalResponse } = require("../utils/localResponses");
-    const { getRecentMessages } = require("../models/Message");
-    const { getConversationContext } = require("../services/memoryManager");
 
     let finalEmotion = "neutral";
     let finalConfidence = 1.0;
 
-    // Handle greeting fast path
+    // ── Greeting fast path ────────────────────────────────────
     if (GREETINGS.includes(cleanMessage)) {
-      finalEmotion = "greeting";
-      const greetingResp = getLocalResponse("greeting");
+      const greetingResp = pickRandom(GREETING_RESPONSES);
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", greetingResp, "greeting");
       }
-      sendSSE({ token: greetingResp, done: false });
-      sendSSE({ done: true, chatId: currentChatId, emotion: "greeting" });
-      res.end();
-      return;
+      sendSSE(res, { token: greetingResp, done: false });
+      sendSSE(res, { done: true, chatId: currentChatId, emotion: "greeting" });
+      return res.end();
     }
 
+    // ── Emotion Detection (Local TFLite) ──────────────────────
     const detection = await predictEmotion(message);
     finalEmotion = detection.emotion;
     finalConfidence = detection.confidence;
 
-    // Crisis fast path
+    // ── Crisis fast path ──────────────────────────────────────
     if (finalEmotion === "crisis") {
-      const crisisResp = getLocalResponse("crisis");
+      const crisisResp = pickRandom(CRISIS_RESPONSES);
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", crisisResp, "crisis");
       }
-      sendSSE({ token: crisisResp, done: false });
-      sendSSE({ done: true, chatId: currentChatId, emotion: "crisis" });
-      res.end();
-      return;
+      sendSSE(res, { token: crisisResp, done: false });
+      sendSSE(res, { done: true, chatId: currentChatId, emotion: "crisis" });
+      return res.end();
     }
 
+    // ── Build emotion-aware prompt ────────────────────────────
     const memoryContext = await getConversationContext(currentChatId, userId);
     const recentMessages = await getRecentMessages(currentChatId, 15);
     const isGenZ = detectGenZTone(toneMode, recentMessages);
@@ -354,41 +307,43 @@ router.post("/stream", async (req, res) => {
       ...historyPayload,
     ];
 
+    // ── Stream from Groq ──────────────────────────────────────
     let fullResponse = "";
-
     try {
-      // Use consolidated AI service for streaming
       fullResponse = await streamChat(messagesPayload, res);
 
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", fullResponse, finalEmotion);
         await updateChatTimestamp(currentChatId);
       }
-      checkAndSummarize(currentChatId).catch(() => { });
-      sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
-      res.end();
+      checkAndSummarize(currentChatId).catch(() => {});
+      sendSSE(res, { done: true, chatId: currentChatId, emotion: finalEmotion });
+      return res.end();
     } catch (aiErr) {
-      console.error("AI Streaming failed:", aiErr.message);
-      
-      // Final Fallback: Local Response (ensures stream never just hangs)
-      const localResp = getLocalResponse(finalEmotion);
-      if (!fullResponse) { // Only send if we haven't sent anything yet
+      logger.error("Groq streaming failed:", aiErr.message);
+
+      if (!fullResponse) {
+        const errorMsg = "I'm having a moment of connection difficulty. Please try sending your message again.";
         if (shouldSave && currentChatId) {
-          await addMessage(currentChatId, "assistant", localResp, finalEmotion);
+          await addMessage(currentChatId, "assistant", errorMsg, finalEmotion);
         }
-        sendSSE({ token: localResp, done: false });
+        sendSSE(res, { token: errorMsg, done: false });
       }
-      sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
-      res.end();
+      sendSSE(res, { done: true, chatId: currentChatId, emotion: finalEmotion });
+      return res.end();
     }
   } catch (error) {
-    console.error("Critical Stream error:", error.message);
-    res.write(`data: ${JSON.stringify({ error: error.message, done: true })}\n\n`);
-    res.end();
+    logger.error("Critical stream error:", error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: error.message });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: error.message, done: true })}\n\n`);
+      res.end();
+    }
   }
 });
 
-// ── Create new chat ─────────────────────────────────────────────
+// ── POST /new ────────────────────────────────────────────────────
 router.post("/new", async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -410,7 +365,7 @@ router.post("/new", async (req, res) => {
   }
 });
 
-// ── Get all chats for current user ──────────────────────────────
+// ── GET /history ─────────────────────────────────────────────────
 router.get("/history", async (req, res) => {
   try {
     const chats = await getChatsByUser(req.user.uid);
@@ -420,7 +375,7 @@ router.get("/history", async (req, res) => {
   }
 });
 
-// ── Search messages ─────────────────────────────────────────────
+// ── GET /search ──────────────────────────────────────────────────
 router.get("/search", async (req, res) => {
   try {
     const { q } = req.query;
@@ -434,7 +389,7 @@ router.get("/search", async (req, res) => {
   }
 });
 
-// ── Get specific chat ───────────────────────────────────────────
+// ── GET /:chatId ─────────────────────────────────────────────────
 router.get("/:chatId", async (req, res) => {
   try {
     const chat = await getChatByChatId(req.params.chatId);
@@ -449,7 +404,7 @@ router.get("/:chatId", async (req, res) => {
   }
 });
 
-// ── Delete chat ─────────────────────────────────────────────────
+// ── DELETE /:chatId ──────────────────────────────────────────────
 router.delete("/:chatId", async (req, res) => {
   try {
     await deleteChat(req.params.chatId, req.user.uid);
@@ -459,7 +414,7 @@ router.delete("/:chatId", async (req, res) => {
   }
 });
 
-// ── Edit message ────────────────────────────────────────────────
+// ── PUT /message/:messageId ──────────────────────────────────────
 router.put("/message/:messageId", async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -480,29 +435,24 @@ router.put("/message/:messageId", async (req, res) => {
   }
 });
 
-// ── Generate AI title for chat ──────────────────────────────────
+// ── POST /:chatId/title ──────────────────────────────────────────
 router.post("/:chatId/title", async (req, res) => {
   try {
-    if (!openai) {
+    if (!process.env.GROQ_API_KEY) {
       return res.json({ success: true, data: { title: "Chat" } });
     }
     const messages = await getMessagesByChatId(req.params.chatId);
     const preview = messages.slice(0, 4).map(m => `${m.role}: ${m.text}`).join("\n");
 
-    const completion = await openai.chat.completions.create({
-      model: AI_MODEL,
-      messages: [
-        { role: "system", content: "Generate a short title (3-6 words) for this conversation. Return ONLY the title, no quotes." },
-        { role: "user", content: preview },
-      ],
-      max_tokens: 20,
-    });
+    const title = await streamChat([
+      { role: "system", content: "Generate a short title (3-6 words) for this conversation. Return ONLY the title, no quotes, no punctuation." },
+      { role: "user", content: preview },
+    ], null);
 
-    const title = completion.choices[0].message.content.trim();
     const { pool } = require("../db");
-    await pool.execute("UPDATE Chat SET chatTitle = ? WHERE chatId = ?", [title, req.params.chatId]);
+    await pool.execute("UPDATE Chat SET chatTitle = ? WHERE chatId = ?", [title.trim(), req.params.chatId]);
 
-    res.json({ success: true, data: { title } });
+    res.json({ success: true, data: { title: title.trim() } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
