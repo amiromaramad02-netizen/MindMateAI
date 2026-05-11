@@ -2,6 +2,7 @@ const admin = require("firebase-admin");
 const rateLimit = require("express-rate-limit");
 const xss = require("xss");
 const logger = require("../utils/logger");
+const { findByUid } = require("../models/User");
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -35,11 +36,25 @@ const verifyToken = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    req.user = decodedToken;
+    
+    // Fetch user from DB to get the role
+    const dbUser = await findByUid(decodedToken.uid);
+    req.user = { ...decodedToken, role: dbUser?.role || "user" };
+    
     next();
   } catch (error) {
     logger.error("Token verification failed:", error.message);
     return res.status(401).json({ success: false, error: "Invalid or expired session." });
+  }
+};
+
+// ── Require admin middleware ────────────────────────────────────
+const requireAdmin = (req, res, next) => {
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    logger.warn(`Unauthorized admin access attempt by user: ${req.user?.email}`);
+    return res.status(403).json({ success: false, error: "Access denied. Admin role required." });
   }
 };
 
@@ -66,6 +81,7 @@ const limiter = rateLimit({
 
 module.exports = {
   verifyToken,
+  requireAdmin,
   sanitizeInputs,
   limiter,
 };
