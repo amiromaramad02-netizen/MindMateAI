@@ -73,7 +73,10 @@ export default function Chat({
     let fullText = "";
     try {
       const response = await streamMessage(text, chatId, toneMode);
-      if (!response.ok) throw new Error("Connection failed");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Connection failed: ${response.status}`);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -88,15 +91,23 @@ export default function Chat({
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          
           try {
-            const data = JSON.parse(line.slice(6));
+            const data = JSON.parse(trimmed.slice(6));
+            
+            if (data.error) {
+              throw new Error(data.error);
+            }
+
             if (data.token) {
               fullText += data.token;
               setMessages((prev) =>
                 prev.map((m) => (m.id === botMsgId ? { ...m, content: fullText } : m))
               );
             }
+
             if (data.done) {
               if (!chatId && data.chatId) {
                 setActiveChatId(data.chatId);
@@ -110,14 +121,18 @@ export default function Chat({
                 prev.map((m) => (m.id === botMsgId ? { ...m, isStreaming: false } : m))
               );
             }
-          } catch (e) { }
+          } catch (e) {
+            if (e.message && e.message !== "Unexpected end of JSON input") {
+              console.warn("SSE parsing error:", e.message, "Line:", line);
+            }
+          }
         }
       }
     } catch (error) {
-      console.error("Error streaming:", error);
+      console.error("Critical error during streaming:", error);
       const errorText = "⚠️ Response interrupted. Please retry.";
       setMessages((prev) =>
-        prev.map((m) => (m.id === botMsgId ? { ...m, content: fullText + "\n\n" + errorText, isStreaming: false } : m))
+        prev.map((m) => (m.id === botMsgId ? { ...m, content: (fullText || "") + "\n\n" + errorText, isStreaming: false } : m))
       );
     } finally {
       setIsTyping(false);

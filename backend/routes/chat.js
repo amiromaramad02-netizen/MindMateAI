@@ -12,6 +12,7 @@ const {
 const { getPreferences } = require("../models/User");
 const { generateResponse } = require("../services/aiRouter");
 const { checkAndSummarize } = require("../services/memoryManager");
+const { streamChat } = require("../services/aiService");
 const OpenAI = require("openai");
 
 const isXAI = process.env.OPENAI_API_KEY?.startsWith("xai-");
@@ -278,10 +279,15 @@ router.post("/stream", async (req, res) => {
     const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
 
     if (CREATOR_TRIGGERS.some(t => cleanMessage.includes(t))) {
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Prevents proxy buffering on Railway/Nginx
 
+    const sendSSE = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // Handle creator fast path
+    if (CREATOR_TRIGGERS.some(t => cleanMessage.includes(t))) {
       if (shouldSave && currentChatId) {
         await addMessage(currentChatId, "assistant", CREATOR_RESPONSE, "neutral");
       }
@@ -291,7 +297,6 @@ router.post("/stream", async (req, res) => {
       return;
     }
 
-    const GREETINGS = ["hi", "hello", "hey", "yo", "hi there", "hey there", "greetings", "sup", "heyy"];
     const { predictEmotion } = require("../services/emotionDetector");
     const { getLocalResponse } = require("../utils/localResponses");
     const { getRecentMessages } = require("../models/Message");
@@ -300,15 +305,13 @@ router.post("/stream", async (req, res) => {
     let finalEmotion = "neutral";
     let finalConfidence = 1.0;
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
     // Handle greeting fast path
     if (GREETINGS.includes(cleanMessage)) {
       finalEmotion = "greeting";
       const greetingResp = getLocalResponse("greeting");
-      await addMessage(currentChatId, "assistant", greetingResp, "greeting");
+      if (shouldSave && currentChatId) {
+        await addMessage(currentChatId, "assistant", greetingResp, "greeting");
+      }
       sendSSE({ token: greetingResp, done: false });
       sendSSE({ done: true, chatId: currentChatId, emotion: "greeting" });
       res.end();
@@ -351,93 +354,35 @@ router.post("/stream", async (req, res) => {
       ...historyPayload,
     ];
 
-    // ── Primary: Ollama Streaming ──────────────────────────────
+    let fullResponse = "";
+
     try {
-      const ollamaRes = await fetch("http://localhost:11434/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "llama3",
-          messages: messagesPayload,
-          stream: true,
-        }),
-      });
+      // Use consolidated AI service for streaming
+      fullResponse = await streamChat(messagesPayload, res);
 
-      if (ollamaRes.ok) {
-        let fullResponse = "";
-        const decoder = new TextDecoder();
-
-        for await (const chunk of ollamaRes.body) {
-          const text = decoder.decode(chunk, { stream: true });
-          const lines = text.split('\n').filter(l => l.trim());
-          for (const line of lines) {
-            try {
-              const data = JSON.parse(line);
-              const token = data.message?.content || "";
-              if (token) {
-                fullResponse += token;
-                sendSSE({ token, done: false });
-              }
-            } catch (err) { }
-          }
-        }
-
-        if (shouldSave && currentChatId) {
-          await addMessage(currentChatId, "assistant", fullResponse, finalEmotion);
-          await updateChatTimestamp(currentChatId);
-        }
-        checkAndSummarize(currentChatId).catch(() => { });
-        sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
-        res.end();
-        return;
+      if (shouldSave && currentChatId) {
+        await addMessage(currentChatId, "assistant", fullResponse, finalEmotion);
+        await updateChatTimestamp(currentChatId);
       }
-    } catch (ollamaErr) {
-      console.log("Ollama streaming failed, falling back:", ollamaErr.message);
-    }
-
-    // ── Secondary: OpenAI Streaming ────────────────────────────
-    if (openai) {
-      try {
-        const stream = await openai.chat.completions.create({
-          model: AI_MODEL,
-          stream: true,
-          messages: messagesPayload,
-          max_tokens: 350,
-          temperature: 0.82,
-        });
-
-        let fullResponse = "";
-        for await (const chunk of stream) {
-          const token = chunk.choices[0]?.delta?.content || "";
-          if (token) {
-            fullResponse += token;
-            sendSSE({ token, done: false });
-          }
-        }
-
+      checkAndSummarize(currentChatId).catch(() => { });
+      sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
+      res.end();
+    } catch (aiErr) {
+      console.error("AI Streaming failed:", aiErr.message);
+      
+      // Final Fallback: Local Response (ensures stream never just hangs)
+      const localResp = getLocalResponse(finalEmotion);
+      if (!fullResponse) { // Only send if we haven't sent anything yet
         if (shouldSave && currentChatId) {
-          await addMessage(currentChatId, "assistant", fullResponse, finalEmotion);
-          await updateChatTimestamp(currentChatId);
+          await addMessage(currentChatId, "assistant", localResp, finalEmotion);
         }
-        checkAndSummarize(currentChatId).catch(() => { });
-        sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
-        res.end();
-        return;
-      } catch (gptErr) {
-        console.error("OpenAI stream failed, falling back to local:", gptErr.message);
+        sendSSE({ token: localResp, done: false });
       }
+      sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
+      res.end();
     }
-
-    // ── Fallback: Local Response ───────────────────────────────
-    const localResp = getLocalResponse(finalEmotion);
-    if (shouldSave && currentChatId) {
-      await addMessage(currentChatId, "assistant", localResp, finalEmotion);
-    }
-    sendSSE({ token: localResp, done: false });
-    sendSSE({ done: true, chatId: currentChatId, emotion: finalEmotion });
-    res.end();
   } catch (error) {
-    console.error("Stream error:", error.message);
+    console.error("Critical Stream error:", error.message);
     res.write(`data: ${JSON.stringify({ error: error.message, done: true })}\n\n`);
     res.end();
   }
